@@ -1,7 +1,15 @@
-package pruebasRoboticas;
+package alanrdgz;
 
-import java.awt.*;
+//Robocode Semana i :D.
+//Karla Fabiola Ramirez Martinez.
+//Alejandro Torices Oliva.
+//Alan Giovanni Rodriguez Camacho.
+
+//La estrategia de nuestor robot es bastante simple, busca enemigos y se dedica a girar mientras los ataca de forma circular.
+
+import java.awt.Color;
 import java.util.Random;
+
 
 import robocode.AdvancedRobot;
 import robocode.BulletHitEvent;
@@ -10,164 +18,169 @@ import robocode.HitByBulletEvent;
 import robocode.HitRobotEvent;
 import robocode.HitWallEvent;
 import robocode.ScannedRobotEvent;
-import java.util.Arrays;;
 
 public class PequeTeemonio extends AdvancedRobot {
-	//son int final. Por default la primera vale 0, la segunda 1, etc
-	
 	private Estado estado;
-	
 	private ScannedRobotEvent eventoUltimo;
-	private Random random = new Random();
-	private EnemyBot[] enemy;
+	private int potencia=1;
+	private double giroCanon;
+	private double giroRadar;
+	private Random rnd = new Random();
+	private int constanteF=99999;
+	private int choques;
+	//Este estado se concentra en detectar que debe priorizar la huida cuando es necesario.
+	private boolean estadoH;
 	
-	private int potencia, dirMovimiento, dirRadar, dirCannon, nextEnemy;
-	private double damageIncome, previousEnergy, energyGain;
-		
-	@Override
-	public void run() {
-		setColors(Color.red,Color.orange, Color.yellow, Color.yellow, Color.yellow);
-		inicializar();
-		while(true) {
+	private void Inicializar() {
+		Random random = new Random();
+		estado=Estado.GIRANDO;	
+		//Esto nos deja mover a voluntad el radar y el arma por separado.
+		setAdjustRadarForGunTurn(true); 
+		setAdjustGunForRobotTurn(true);
+		//Esto le da los colores a nuestro robot.
+		Color rojo = new Color(200+random.nextInt(50), 100+random.nextInt(100), 10+random.nextInt(10));
+		setColors(rojo, Color.yellow, rojo);
+		choques = 0;
+	}
+	//Run donde se ejecutara todo lo que hace el robot
+	public void run() {	
+			Inicializar();
+		while (true)
 			switch (estado) {
 			case GIRANDO:
-				turnLeft(45);
-				setTurnGunRight(99999);
+				//Todo el tiempo checa si esta a punto de chocar con la pared
+				AlmostHWall();
+				estadoH=false;
+				setTurnRadarRight(constanteF);
+				setTurnGunRight(constanteF);
+				setTurnRight(constanteF);
+				setAhead(10);
+				setTurnLeft(10);
 				execute();
 				break;
-			case DISPARANDO:
-				dirCannon = -dirCannon;
-				setTurnGunRight(99999*dirCannon);
-				setFire(potencia);
-				execute();
-				break;
+			//Aqui ajusta el angulo cuando encuentra un enemigo.
 			case AJUSTANDO:
-				setTurnRight(eventoUltimo.getBearing()+90-30*dirMovimiento);
-				estado = Estado.DISPARANDO; // INCONDICIONAL
+				turnLeft(-eventoUltimo.getBearing());	
+				estado=Estado.DISPARANDO;//Incondicional.
+				break;	
+			//En este metodo se dedica a disparar y al mismo tiempo no deja de mover.
+			case DISPARANDO:
+				AlmostHWall();
+				//Se dispone a girar el cañon a donde esta el enemigo mientras sigue moviendose.
+				setTurnRadarRight((giroRadar));
+			    setTurnGunRight((giroCanon));
+				fire(potencia);
+				setAhead(rnd.nextInt(90));
+				setTurnRight(rnd.nextInt(20));
 				execute();
 				break;
-			case ACERCANDOSE:
-				setAhead(eventoUltimo.getDistance());
-				estado = Estado.DISPARANDO;
-				execute();
+			//El estado de huida y escape son similares, sin embargo el estado de huida es un poco menos agresivo y ocurre mas seguido.
+			case HUIDA:
+				//Se reposiciona con algunos valores random.
+				setBack(rnd.nextInt(35));
+				setTurnRight(rnd.nextInt(30));
+				ahead(100);
+				estado=Estado.GIRANDO;
 				break;
-			case POTENCIANDO:
-				if(potencia<3){
-					potencia++;
+			//Caso especial donde busca reponerse del muro.
+			case REPOSICION_MURO:
+				estadoH=false;
+				back(100);
+				estado=Estado.GIRANDO;
+				break;
+			//Estado similar a huida pero mas evasivo.
+			case ESCAPE:
+				setAhead(rnd.nextInt(100));
+				setTurnLeft(rnd.nextInt(60));
+				estado=Estado.GIRANDO;
+			//Esatdo en el que si etecta que nuestro robot choca a otro mas de 2 veces se dirige hacia atras evitando mas colisiones.
+			case ENEMIGO:
+				setTurnRight(180);
+				if(choques>2) {
+					ahead(100);
+				}else {
+					back(100);
 				}
-				estado = Estado.ACERCANDOSE;
-				break;
-				
-			case ESQUIVANDO:
-				dirMovimiento = -dirMovimiento;
-				setAhead((eventoUltimo.getDistance()/4+25)*dirMovimiento);
 				execute();
-				if(previousEnergy==getEnergy()){
-					estado=Estado.GIRANDO;
-				}
-				break;
-			case HUYENDO:
-				if (eventoUltimo.getBearing() > -90 && eventoUltimo.getBearing() <= 90) {
-			           setBack(100);
-			           execute();
-			       } else {
-			           setAhead(100);
-			           execute();
-			       
+				choques = 0;
 				estado = Estado.GIRANDO;
 				break;
-			   }
 			default:
-				doNothing();
 				break;
 			}
-		}
 	}
 	
-	//TRANSICIONES
 	@Override
 	public void onScannedRobot(ScannedRobotEvent event) {
-		int x = includes(event.getName());
-		if(x<0) {
-			enemy[nextEnemy] = new EnemyBot(event.getName(), event.getEnergy(), event.getVelocity(), event.getDistance(), event.getBearing());
-			nextEnemy++;
-		}else {
-			enemy[x].update(event.getEnergy(), event.getVelocity(), event.getDistance(), event.getBearing());
+		//Esto fija el punto donde debe apuntar para apuntarle al enemigo que tiene enfrente.
+		this.giroRadar = event.getBearing() + getHeading() - getRadarHeading();
+		this.giroCanon = event.getBearing() + getHeading() - getGunHeading();
+		//Este if sirve para saber si el enemigo se encuentra almenos a 300 pixeles le dispararemos, si no seguira realizando las demas acciones.
+		if (event.getDistance()<300) {
+			estado=Estado.DISPARANDO;
+		} else {
+			return;
 		}
-		estado = Estado.AJUSTANDO;
-		eventoUltimo = event;
+	}
+	@Override
+	public void onBulletHit(BulletHitEvent event) { //Cuando golpea con una bala aumenta la potencia.
+		if (potencia<3) {
+			potencia++;
+		}
+		else
+			doNothing();
+	}
+	
+	@Override
+	public void onBulletMissed(BulletMissedEvent event) { //Cuando no golpea con la bala reinicia la potencia.
+		potencia=1;
+		estado=Estado.GIRANDO;
+	}
+	
+	@Override
+	public void onHitByBullet(HitByBulletEvent event) { //Cuando es golpeado por una bala decide como proceder dependiendo de la vida.
+		estadoH=true;
+		if (getEnergy()<=20) {
+			estado=Estado.ESCAPE;
+		}
+		else if (getEnergy()<=50) {
+			estado=Estado.HUIDA;
+		}
+	}
+	
+	@Override
+	public void onHitRobot(HitRobotEvent event) { //Llama al estado de ENEMIGO cuando colisiona con un enemigo.
+		choques++;
+		estado = Estado.ENEMIGO;
+	}
+	
+	@Override
+	public void onHitWall(HitWallEvent event) { //Llama al estado de reposicion cuando golpea con una pared.
+		estadoH=true;	
+		estado=Estado.REPOSICION_MURO;
+	}
+	
+	public void AlmostHWall(){
+		System.out.println("Si esta llegando al estado de AlmosHWall :)");
+		System.out.println("la XMax :)" + getBattleFieldWidth()  );
+		System.out.println("la Y :)" + this.getY() );
+		System.out.println("la X :)" + this.getX() );
+		
+		if(( this.getX()<=80||this.getX()>=(getBattleFieldWidth()-80)||this.getY()<=80||this.getY()>=(getBattleFieldHeight()-80) ) && !estadoH ) {
+			System.out.println("Si entra al if de AlmosHWall O W O");
+			estado=Estado.REPOSICION_MURO;
+		}
 		
 	}
 	
-	@Override
-	public void onBulletHit(BulletHitEvent event) {
-		int x = includes(event.getName());
-		if(x>0){
-			enemy[x].moreInfo(event.getEnergy(), event.getBullet().getX(), event.getBullet().getY());
-		}
-		energyGain = event.getBullet().getPower() * 2;
-		estado = Estado.POTENCIANDO;
-	}
-	
-	@Override
-	public void onBulletMissed(BulletMissedEvent event) {
-		estado = Estado.GIRANDO;
-		potencia = 1;
-	}
-	
-	@Override
-	public void onHitRobot(HitRobotEvent event) {
-		damageIncome = previousEnergy-getEnergy();
-		previousEnergy = getEnergy();
-		if(damageIncome>energyGain) {
-			estado = Estado.HUYENDO;
-		}
-	}
-	
-	@Override
-	public void onHitWall(HitWallEvent event) {
-		setAhead(10);
-		estado = Estado.GIRANDO;
-		
-	}
-	
-
-	@Override
-	public void onHitByBullet(HitByBulletEvent event) {
-		damageIncome = previousEnergy-getEnergy();
-		previousEnergy = getEnergy();
-		if(damageIncome>energyGain) {
-			estado = Estado.ESQUIVANDO;
-		}
-	}
-	
-	private void inicializar() {
-		enemy = new EnemyBot[7];
-		estado = Estado.GIRANDO;
-		potencia = 1;
-		dirCannon = 1;
-		dirMovimiento = 1;
-		nextEnemy = 0;
-		previousEnergy = 100;
-	}
-	
-	private int includes(String name) {
-		for(int i = 0; i<enemy.length; i++) {
-			if(name.equals(enemy[i].nombre)) {
-				return i;
-			}
-		}
-		return -1;
-	}
-
-
 	private enum Estado{
 		GIRANDO,
 		DISPARANDO,
 		AJUSTANDO,
-		ACERCANDOSE,
-		POTENCIANDO, 
-		ESQUIVANDO,
-		ALERTA,
-		HUYENDO}
+		HUIDA,
+		ESCAPE,
+		REPOSICION_MURO,
+		ENEMIGO
+	}
+
 }
